@@ -65,6 +65,20 @@ class ScannerTests(unittest.TestCase):
             scanner.evaluate('2330',self.stock(bars),bars[-1][0])
             self.assertEqual(f.call_args.args[0],bars[:-1])
 
+    def test_center_breakout_requires_prior_close_below_upper(self):
+        bars=self.bars();bars[-1][2]=180;bars[-1][4]=179;bars[-1][5]=2000000
+        center={'lower':150,'upper':165,'end_index':45,'confirmed_index':46,'start':bars[30][0],'end':bars[45][0]}
+        with patch('scanner.latest_center',return_value=center):
+            self.assertEqual(scanner.evaluate('2330',self.stock(bars),bars[-1][0])['signal'],'中樞突破候選')
+
+    def test_center_pullback_must_hold_upper(self):
+        bars=self.bars()
+        center={'lower':145,'upper':155,'end_index':45,'confirmed_index':46,'start':bars[30][0],'end':bars[45][0]}
+        with patch('scanner.latest_center',return_value=center):
+            self.assertEqual(scanner.evaluate('2330',self.stock(bars),bars[-1][0])['signal'],'中樞回踩候選')
+            bars[-1][3]=154
+            self.assertNotEqual(scanner.evaluate('2330',self.stock(bars),bars[-1][0])['signal'],'中樞回踩候選')
+
     def test_fractal_requires_right_bar(self):
         bars=self.bars(4)
         self.assertIsNone(scanner.latest_center(bars))
