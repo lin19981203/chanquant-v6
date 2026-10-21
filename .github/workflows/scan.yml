@@ -9,6 +9,8 @@ on:
     paths:
       - index.html
       - scanner-ui.js
+      - backtest-ui.js
+      - backtest_results.json
       - scanner.py
       - test_scanner.py
       - .github/workflows/scan.yml
@@ -35,6 +37,9 @@ jobs:
           python-version: '3.12'
       - name: Validate scanner
         run: python -m unittest -v test_scanner.py
+      - name: Validate backtest execution rules
+        if: hashFiles('test_backtest_market.py') != ''
+        run: python -m unittest -v test_backtest_market.py
       - name: Fetch official EOD data and scan
         run: python -u scanner.py --days 120
       - name: Save daily history and results
@@ -51,6 +56,9 @@ jobs:
         run: |
           mkdir -p public
           cp index.html scanner-ui.js scan_results.json public/
+          for file in backtest-ui.js backtest_results.json backtest_trades_*.csv backtest_audit_*.zip; do
+            if [ -f "$file" ]; then cp "$file" public/; fi
+          done
           touch public/.nojekyll
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
@@ -66,3 +74,4 @@ jobs:
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
