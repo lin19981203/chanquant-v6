@@ -28,6 +28,9 @@ def number(v):
     except (ValueError, TypeError):
         return None
 
+def common_stock(code, name=''):
+    return bool(re.fullmatch(r'[1-9][0-9]{3}', code)) and not code.startswith('91') and not str(name).upper().endswith('DR')
+
 def atomic_json(path, obj):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(obj, ensure_ascii=False, separators=(',', ':'), allow_nan=False), encoding='utf-8')
@@ -79,7 +82,7 @@ def fetch_day(market, day):
         code, name, *values = [raw[i] for i in indices]
         code = str(code).strip()
         # Four-digit common shares only: exclude ETFs, warrants, preferred shares and TDRs.
-        if not re.fullmatch(r'[1-9][0-9]{3}', code):
+        if not common_stock(code, name):
             continue
         values = [number(v) for v in values]
         if any(v is None for v in values):
@@ -232,13 +235,13 @@ def main():
         latest = max((b['bars'][-1][0] for b in state['stocks'].values() if b['bars']), default=None)
         evaluated = [evaluate(code, s, latest) for code, s in state['stocks'].items() if s['bars']]
         # Remove delisted/very stale securities from the current universe.
-        evaluated = [s for s in evaluated if (end-dt.date.fromisoformat(s['date'])).days <= 10]
+        evaluated = [s for s in evaluated if common_stock(s['code'], s['name']) and (end-dt.date.fromisoformat(s['date'])).days <= 10]
         warm = sum(s['bars'] >= 60 and s['date'] == latest for s in evaluated)
         markets.append({'market': market, 'date': latest, 'count': len(evaluated), 'ready': warm,
                         'status': 'error' if not latest else 'stale' if (end-dt.date.fromisoformat(latest)).days>4 else 'ok'})
         stocks.extend(evaluated)
     stocks.sort(key=lambda s: (-s['score'], -s['amount'], s['code']))
-    output = {'version': '6.1', 'generated_at': now.isoformat(timespec='seconds'), 'as_of': end.isoformat(),
+    output = {'version': '6.1', 'generated_at': dt.datetime.now(TZ).isoformat(timespec='seconds'), 'as_of': end.isoformat(),
               'status': 'partial' if errors or any(m['status']!='ok' for m in markets) else 'ok',
               'markets': markets, 'errors': errors, 'stocks': stocks,
               'sources': SOURCES, 'rules': {'min_bars': 60, 'min_amount': 20000000, 'min_volume': 500000, 'min_price': 10},

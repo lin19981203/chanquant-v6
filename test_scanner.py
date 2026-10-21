@@ -16,6 +16,23 @@ class ScannerTests(unittest.TestCase):
         for value in ['--','NaN','inf','除權息']:
             self.assertIsNone(scanner.number(value))
 
+    def test_security_universe(self):
+        self.assertTrue(scanner.common_stock('2330','台積電'))
+        for code, name in [('0050','元大台灣50'),('9103','美德醫療DR'),('2002A','中鋼特'),('123456','權證')]:
+            self.assertFalse(scanner.common_stock(code,name))
+
+    def test_source_date_mismatch_rejected(self):
+        import io
+        with patch('scanner.urlopen',return_value=io.BytesIO(b'{"date":"20260101","tables":[]}')):
+            with self.assertRaisesRegex(ValueError,'Date mismatch'):
+                scanner.fetch_day('TWSE',dt.date(2026,1,2))
+
+    def test_unrecognised_schema_is_not_holiday(self):
+        import io
+        with patch('scanner.urlopen',return_value=io.BytesIO(b'{"date":"20260102","stat":"OK","tables":[]}')):
+            with self.assertRaisesRegex(ValueError,'recognised'):
+                scanner.fetch_day('TWSE',dt.date(2026,1,2))
+
     def test_warmup_has_no_candidate(self):
         bars=self.bars(59)
         row=scanner.evaluate('2330',self.stock(bars),bars[-1][0])
