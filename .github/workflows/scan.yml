@@ -1,0 +1,66 @@
+name: Scan Taiwan market and deploy
+
+on:
+  schedule:
+    - cron: '10 9,10 * * 1-5'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - index.html
+      - scanner-ui.js
+      - scanner.py
+      - test_scanner.py
+      - .github/workflows/scan.yml
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: market-pages
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate scanner
+        run: python -m unittest -v test_scanner.py
+      - name: Fetch official EOD data and scan
+        run: python -u scanner.py --days 120
+      - name: Save daily history and results
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add history.json scan_results.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update official EOD market scan'
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Package public website only
+        run: |
+          mkdir -p public
+          cp index.html scanner-ui.js scan_results.json public/
+          touch public/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+  deploy:
+    needs: scan
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
