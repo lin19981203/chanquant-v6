@@ -1,0 +1,16 @@
+{
+  "version": "6.2-chan-reference",
+  "payload_sha256": "7b2ed91e7d45b22f306e386a503271ec87e809a239dd691a80859e7facbee694",
+  "chunks": [
+    "release-v62/sources-01.b64",
+    "release-v62/sources-02.b64",
+    "release-v62/sources-03.b64",
+    "release-v62/sources-04.b64",
+    "release-v62/sources-05.b64",
+    "release-v62/sources-06.b64",
+    "release-v62/sources-07.b64",
+    "release-v62/sources-08.b64",
+    "release-v62/sources-09.b64"
+  ],
+  "purpose": "Verified mobile scanner, structural signals and fifty-million annual replay; no credentials or automatic orders."
+}
