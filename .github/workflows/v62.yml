@@ -26,7 +26,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          p=Path('index.html'',s=p.read_text()
+          p=Path('index.html');s=p.read_text()
           for n in ['app.js','app.css','scanner-ui.js','backtest-ui.js']:s=s.replace('="'+n+'"','="'+n+'?v=6.2-mobile"')
           p.write_text(s)
           PY
