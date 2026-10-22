@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent
+HISTORY_BARS = 420  # one calendar year plus indicator warm-up, never a 180-bar truncation
 SOURCES = {
     'TWSE': 'https://www.twse.com.tw/exchangeReport/MI_INDEX',
     'TPEX': 'https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes',
@@ -202,19 +203,20 @@ def update_market(market, history, days, delay):
                 stock['name'] = name
                 by_date = {b[0]: b for b in stock['bars']}
                 by_date[bar[0]] = bar
-                stock['bars'] = sorted(by_date.values(), key=lambda b: b[0])[-180:]
+                stock['bars'] = sorted(by_date.values(), key=lambda b: b[0])[-HISTORY_BARS:]
             fetched.add(day.isoformat())
             print(f'{market} {day} {len(rows)} shares', flush=True)
         except Exception as exc:
             errors.append({'market': market, 'date': day.isoformat(), 'error': str(exc)[:180]})
             print(f'ERROR {market} {day}: {exc}', flush=True)
         time.sleep(delay)
-    state['fetched'] = sorted(fetched)[-300:]
+    state['fetched'] = sorted(fetched)[-700:]
     return errors
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--days', type=int, default=120)
+    parser.add_argument('--days', type=int, default=477)
+    parser.add_argument('--offline', action='store_true', help='Only analyse the existing verified history')
     parser.add_argument('--delay', type=float, default=1.1)
     parser.add_argument('--as-of', type=dt.date.fromisoformat)
     args = parser.parse_args()
@@ -224,16 +226,19 @@ def main():
     days = [end - dt.timedelta(days=i) for i in range(args.days-1, -1, -1)]
     history_path = ROOT / 'history.json'
     history = json.loads(history_path.read_text()) if history_path.exists() else {'version': 1, 'markets': {}}
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(update_market, m, history, days, args.delay) for m in SOURCES]
-        errors = sum((f.result() for f in futures), [])
+    errors = []
+    if not args.offline:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(update_market, m, history, days, args.delay) for m in SOURCES]
+            errors = sum((f.result() for f in futures), [])
     if not any(s.get('stocks') for s in history['markets'].values()):
         raise SystemExit('No verified market data; existing published files were not overwritten')
     markets, stocks = [], []
     for market in SOURCES:
         state = history['markets'].get(market, {'stocks': {}})
         latest = max((b['bars'][-1][0] for b in state['stocks'].values() if b['bars']), default=None)
-        evaluated = [evaluate(code, s, latest) for code, s in state['stocks'].items() if s['bars']]
+        from chan_points import scan_row
+        evaluated = [scan_row(code, s, latest) for code, s in state['stocks'].items() if s['bars']]
         # Remove delisted/very stale securities from the current universe.
         evaluated = [s for s in evaluated if common_stock(s['code'], s['name']) and (end-dt.date.fromisoformat(s['date'])).days <= 10]
         warm = sum(s['bars'] >= 60 and s['date'] == latest for s in evaluated)
@@ -241,11 +246,14 @@ def main():
                         'status': 'error' if not latest else 'stale' if (end-dt.date.fromisoformat(latest)).days>4 else 'ok'})
         stocks.extend(evaluated)
     stocks.sort(key=lambda s: (-s['score'], -s['amount'], s['code']))
-    output = {'version': '6.1', 'generated_at': dt.datetime.now(TZ).isoformat(timespec='seconds'), 'as_of': end.isoformat(),
+    from chan_points import RULES
+    output = {'version': '6.2', 'generated_at': dt.datetime.now(TZ).isoformat(timespec='seconds'), 'as_of': end.isoformat(),
               'status': 'partial' if errors or any(m['status']!='ok' for m in markets) else 'ok',
               'markets': markets, 'errors': errors, 'stocks': stocks,
-              'sources': SOURCES, 'rules': {'min_bars': 60, 'min_amount': 20000000, 'min_volume': 500000, 'min_price': 10},
-              'notice': '盤後日線研究篩選；簡化分型／筆／三筆重疊中樞，非完整正統纏論，未實作線段、背馳或週／60分鐘共振。未還原權息；除權息及分割可能造成假訊號。候選不等於建議買進。'}
+              'sources': SOURCES, 'rules': {'min_bars': 60, 'min_amount': 20000000, 'min_volume': 500000, 'min_price': 10,
+                'simulation_capital':50000000,'history_calendar_days':365,'warmup_calendar_days':112,'retained_bars':HISTORY_BARS,
+                'timeframe':'D','strategy':'simplified-chan-point-reference','details':RULES},
+              'notice': '盤後日K簡化一／二／三類買賣點參考；無遞迴次級別走勢及線段，不是完整正統纏論。週／月K僅聚合圖表；即時行情未連線。未還原權息；候選不等於買進建議。'}
     atomic_json(history_path, history)
     atomic_json(ROOT/'scan_results.json', output)
     print(json.dumps({'stocks': len(stocks), 'candidates': sum(s['score']>0 for s in stocks), 'markets': markets, 'errors': len(errors)}, ensure_ascii=False), flush=True)

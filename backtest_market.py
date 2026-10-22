@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Point-in-time replay of V6.1 on official daily OHLCV snapshots."""
+"""Legacy V6.1 ledger helpers/tests. CLI now routes to the V6.2 point strategy.
+
+Use backtest_chan.py for the new 50-million replay; legacy functions remain
+for historical execution regression tests and cost/tick utilities.
+"""
 import argparse
 import collections
 import csv
@@ -307,4 +311,6 @@ def main():
         save_csv(ROOT/f'backtest_equity_{group}.csv',report['equity'])
     print(json.dumps({'coverage':coverage,'reports':{k:v['summary'] for k,v in reports.items()},'stress':stressed['summary']},ensure_ascii=False),flush=True)
 
-if __name__=='__main__':main()
+if __name__=='__main__':
+    from backtest_chan import main as run_chan
+    run_chan()
