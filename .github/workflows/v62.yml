@@ -1,0 +1,113 @@
+name: ChanQuant V6.2 scan and deploy
+on:
+  schedule:
+    - cron: '10 9,10 * * 1-5'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['*.py', '*.html', '*.js', '*.css', backtest_results.json, .github/workflows/v62.yml]
+permissions: {contents: write, pages: write, id-token: write}
+concurrency:
+  group: market-pages
+  cancel-in-progress: false
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Verify source
+        if: hashFiles('.v62-installed') == ''
+        run: python release-v62/install.txt
+      - name: Refresh asset URLs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('index.html'',s=p.read_text()
+          for n in ['app.js','app.css','scanner-ui.js','backtest-ui.js']:s=s.replace('="'+n+'"','="'+n+'?v=6.2-mobile"')
+          p.write_text(s)
+          PY
+      - name: Python tests
+        run: python -m unittest -v test_scanner.py test_backtest_market.py test_chan_points.py test_live_gateway.py test_year_data.py
+      - uses: actions/cache/restore@v4
+        if: hashFiles('.v62-installed') == ''
+        with:
+          path: backtest_daily_cache
+          key: v62-official-year-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: v62-official-year-
+      - name: Annual replay
+        if: hashFiles('.v62-installed') == ''
+        run: |
+          python -u history_year.py
+          python -u -c "import finalize_v62 as f; f.SOURCE += ['release-v62/check.py']; f.main()"
+      - uses: actions/cache/save@v4
+        if: always() && hashFiles('.v62-installed') == '' && hashFiles('backtest_daily_cache/*.json') != ''
+        with:
+          path: backtest_daily_cache
+          key: v62-official-year-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Verify replay
+        run: python release-v62/check.py
+      - name: Update market scan
+        run: python -u scanner.py --days 477
+      - name: Commit results
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm --ignore-unmatch release-v62/verify-site.py release-v62/verify-live.py release-v62/sources-01.b64 release-v62/manifest.json
+          git add -- *.py *.html *.js *.css test_ui.cjs README.md RULES_V62.md BACKTEST_REPORT.md VALIDATION.md requirements-live.txt history.json scan_results.json backtest_results.json backtest_trades_*.csv backtest_equity_*.csv backtest_audit_v62_20261021.zip .v62-installed
+          if ! git diff --cached --quiet; then
+            git commit -m 'Publish verified V6.2 source and annual replay'
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Package website
+        run: |
+          mkdir -p public
+          cp index.html app.js app.css scanner-ui.js backtest-ui.js scan_results.json backtest_results.json BACKTEST_REPORT.md RULES_V62.md VALIDATION.md public/
+          python export_charts.py --history history.json --destination public
+          cp backtest_trades_all.csv backtest_trades_b1.csv backtest_trades_b2.csv backtest_trades_b3.csv backtest_audit_v62_20261021.zip public/
+          touch public/.nojekyll
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Mobile tests
+        run: |
+          npm install --prefix "$RUNNER_TEMP/chanquant-ui" --no-save --ignore-scripts jsdom@26.1.0
+          NODE_PATH="$RUNNER_TEMP/chanquant-ui/node_modules" node test_ui.cjs
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: {path: public}
+  deploy:
+    needs: scan
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
+      - name: Verify live website
+        env:
+          SITE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          python - <<'PY'
+          import json,os,time,urllib.request
+          site=os.environ['SITE_URL'].rstrip('/')+'/'
+          def fetch(resource):
+              url=site+resource+'?release='+os.environ['GITHUB_RUN_ID']
+              return urllib.request.urlopen(url,timeout=20).read()
+          for trial in range(12):
+              try:
+                  assert '6.2' in fetch('index.html').decode()
+                  assert json.loads(fetch('scan_results.json'))['version']=='6.2'
+                  report=json.loads(fetch('backtest_results.json'))
+                  assert report['version']=='6.2-chan-reference'
+                  assert report['config']['capital']==50000000
+                  assert fetch('app.js') and fetch('app.css')
+                  print('Live V6.2 verified');break
+              except Exception as exc:
+                  if trial==11:raise
+                  print(repr(exc),flush=True);time.sleep(5)
+          PY
